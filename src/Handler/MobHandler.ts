@@ -7,15 +7,10 @@ export class MobHandler {
 	public static async init(app: Application) {
 		app.post("/spawn-mob/", async (req: Request, res: Response) => {
 			try {
-				const spawnMob: SpawnMob = {
-					id: req.body.id,
-					team: req.body.team,
-					lane: req.body.lane,
-					count: req.body.count,
-					customNames: req.body.customNames
-				};
-				Log.info(`Mob spawned: ${spawnMob.id}`);
-				SocketServer.emit(MessageTypes.SpawnMob, spawnMob);
+				for(const spawnMob of req.body) {
+					Log.info(`Mob spawned: ${spawnMob.id}`);
+					SocketServer.emit(MessageTypes.SpawnMob, spawnMob);
+				}
 
 				res.status(200).send();
 			} catch (error: any) {
