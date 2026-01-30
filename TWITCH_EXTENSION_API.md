@@ -1,7 +1,12 @@
 # Twitch Extension Backend API Documentation
 
 ## Overview
-This server now supports Twitch extension clients alongside the existing Minecraft server functionality. Clients can connect, authenticate, and select mob types and lanes.
+This server supports Twitch extension clients alongside the existing Minecraft server functionality. The server operates in two modes:
+
+- **Single Channel Mode**: Users must select a team before selecting mob types
+- **Dual Channel Mode**: Channel names are used instead of teams
+
+The mode is set by the Minecraft server and communicated to clients during authentication.
 
 ## Connection
 
@@ -24,6 +29,18 @@ const socket = io("http://localhost:8080", {
 });
 ```
 
+## Channel Modes
+
+### Single Channel Mode
+- Users must select a **team** before selecting mob types
+- Team selection is required for mob spawning
+- Used when running a single channel event
+
+### Dual Channel Mode
+- Users provide their **channel name** during authentication
+- No team selection required
+- Used when running dual channel events
+
 ## Message Types
 
 ### Twitch Extension Client Flow
@@ -35,7 +52,8 @@ const socket = io("http://localhost:8080", {
 ```javascript
 {
   userId: "user123",
-  token: "valid-token-at-least-10-chars"
+  token: "valid-token-at-least-10-chars",
+  channelName?: "channel-name" // Required in dual channel mode
 }
 ```
 
@@ -43,7 +61,8 @@ const socket = io("http://localhost:8080", {
 ```javascript
 {
   success: true,
-  sessionId: "socket-id-here"
+  sessionId: "socket-id-here",
+  mode: "SINGLE" | "DUAL"
 }
 // OR
 {
@@ -56,17 +75,39 @@ const socket = io("http://localhost:8080", {
 ```javascript
 socket.emit("Authenticate", {
   userId: "twitch-user-123",
-  token: "my-secure-token-123"
+  token: "my-secure-token-123",
+  channelName: "my-channel" // Include in dual channel mode
 }, (response) => {
   if (response.success) {
     console.log("Authenticated:", response.sessionId);
+    console.log("Mode:", response.mode);
   } else {
     console.error("Auth failed:", response.error);
   }
 });
 ```
 
-#### 2. Select Mob Type
+#### 2. Select Team (Single Channel Mode Only)
+**Event:** `SelectTeam`
+
+**Request:**
+```javascript
+{
+  team: "team-name"
+}
+```
+
+**Example:**
+```javascript
+// Must be called BEFORE selecting mob type in single channel mode
+socket.emit("SelectTeam", {
+  team: "red"
+});
+```
+
+**Note:** Team selection is only valid in single channel mode. In dual channel mode, this message is ignored.
+
+#### 3. Select Mob Type
 **Event:** `SelectMob`
 
 **Request:**
@@ -83,7 +124,9 @@ socket.emit("SelectMob", {
 });
 ```
 
-#### 3. Select Lane
+**Important:** In single channel mode, you must call `SelectTeam` first, or the mob selection will be ignored.
+
+#### 4. Select Lane
 **Event:** `SelectLane`
 
 **Request:**
@@ -102,7 +145,26 @@ socket.emit("SelectLane", {
 
 ### Minecraft Server Flow
 
-#### 1. Receive Full State (on connect)
+#### 1. Set Mode
+**Event:** `SetMode`
+
+The Minecraft server can change the mode at any time.
+
+**Request:**
+```javascript
+{
+  mode: "SINGLE" | "DUAL"
+}
+```
+
+**Example:**
+```javascript
+socket.emit("SetMode", {
+  mode: "SINGLE"
+});
+```
+
+#### 2. Receive Full State (on connect)
 **Event:** `FullStateSync`
 
 **Data:**
@@ -111,7 +173,9 @@ socket.emit("SelectLane", {
   {
     userId: "user123",
     mobType: "ZOMBIE",
-    lane: "LEFT"
+    lane: "LEFT",
+    team?: "red",           // Present in single channel mode
+    channelName?: "channel" // Present in dual channel mode
   },
   // ... more user selections
 ]
@@ -125,7 +189,7 @@ socket.on("FullStateSync", (fullState) => {
 });
 ```
 
-#### 2. Receive State Diffs (throttled updates)
+#### 3. Receive State Diffs (throttled updates)
 **Event:** `StateDiff`
 
 **Data:**
@@ -135,14 +199,18 @@ socket.on("FullStateSync", (fullState) => {
     {
       userId: "new-user",
       mobType: "WARRIOR",
-      lane: "RIGHT"
+      lane: "RIGHT",
+      team?: "blue",
+      channelName?: "new-channel"
     }
   ],
   updated: [
     {
       userId: "user123",
       mobType: "WITCH",
-      lane: "CENTER"
+      lane: "CENTER",
+      team?: "red",
+      channelName?: "channel"
     }
   ],
   removed: ["disconnected-user-id"]
@@ -176,9 +244,24 @@ socket.on("StateDiff", (diff) => {
 - When state changes, only the diff is sent to the Minecraft server
 - When a Twitch client disconnects, their state is removed
 
-## Example Complete Flow
+## Mode-Specific Behaviors
 
-### Twitch Extension Client
+### Single Channel Mode
+1. Client authenticates with userId and token
+2. Client **must** select a team using `SelectTeam`
+3. Client selects mob type (only allowed after team is selected)
+4. Client selects lane
+5. State includes `team` field
+
+### Dual Channel Mode
+1. Client authenticates with userId, token, and channelName
+2. Client selects mob type (no team selection required)
+3. Client selects lane
+4. State includes `channelName` field
+
+## Example Complete Flows
+
+### Single Channel Mode - Twitch Extension Client
 ```javascript
 const io = require("socket.io-client");
 
@@ -192,14 +275,46 @@ socket.on("connect", () => {
     userId: "twitch-user-456",
     token: "secure-token-12345"
   }, (response) => {
-    if (response.success) {
-      console.log("Connected and authenticated!");
+    if (response.success && response.mode === "SINGLE") {
+      console.log("Connected in SINGLE mode!");
       
-      // Select mob type
+      // Must select team first
+      socket.emit("SelectTeam", { team: "red" });
+      
+      // Then select mob type
       socket.emit("SelectMob", { mobType: "HUNTER" });
       
-      // Select lane
+      // And lane
       socket.emit("SelectLane", { lane: "CENTER" });
+    }
+  });
+});
+```
+
+### Dual Channel Mode - Twitch Extension Client
+```javascript
+const io = require("socket.io-client");
+
+const socket = io("http://localhost:8080", {
+  transports: ["websocket"]
+});
+
+socket.on("connect", () => {
+  // Authenticate with channel name
+  socket.emit("Authenticate", {
+    userId: "twitch-user-789",
+    token: "secure-token-12345",
+    channelName: "mychannel"
+  }, (response) => {
+    if (response.success && response.mode === "DUAL") {
+      console.log("Connected in DUAL mode!");
+      
+      // No team selection needed in dual mode
+      // Select mob type directly
+      socket.emit("SelectMob", { mobType: "WARRIOR" });
+      
+      // And lane
+      socket.emit("SelectLane", { lane: "RIGHT" });
     }
   });
 });
@@ -216,6 +331,9 @@ const socket = io("http://localhost:8080", {
 
 socket.on("connect", () => {
   console.log("Minecraft server connected");
+  
+  // Set the mode (single or dual channel)
+  socket.emit("SetMode", { mode: "SINGLE" });
 });
 
 socket.on("FullStateSync", (fullState) => {
@@ -242,3 +360,7 @@ socket.on("StateDiff", (diff) => {
 - `LEFT`
 - `CENTER`
 - `RIGHT`
+
+### ChannelMode
+- `SINGLE` - Single channel mode (requires team selection)
+- `DUAL` - Dual channel mode (uses channel names)

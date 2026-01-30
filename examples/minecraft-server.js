@@ -1,8 +1,8 @@
 /**
  * Example Minecraft Server Client
  * 
- * This script demonstrates how the Minecraft server would connect
- * and receive state updates from Twitch extension clients.
+ * This script demonstrates how the Minecraft server would connect,
+ * set the channel mode, and receive state updates from Twitch extension clients.
  */
 
 const io = require("socket.io-client");
@@ -15,6 +15,13 @@ const socket = io("http://localhost:8080", {
 
 socket.on("connect", () => {
   console.log("✓ Minecraft server connected");
+  
+  // Set the channel mode (SINGLE or DUAL)
+  // You can change this to test different modes
+  const mode = process.argv[2] || "SINGLE"; // Default to SINGLE, can pass DUAL as argument
+  
+  console.log(`Setting mode to: ${mode}`);
+  socket.emit("SetMode", { mode: mode });
 });
 
 // Receive full state on connection
@@ -26,6 +33,12 @@ socket.on("FullStateSync", (fullState) => {
     console.log(`  ${index + 1}. User: ${user.userId}`);
     console.log(`     Mob Type: ${user.mobType}`);
     console.log(`     Lane: ${user.lane}`);
+    if (user.team) {
+      console.log(`     Team: ${user.team}`);
+    }
+    if (user.channelName) {
+      console.log(`     Channel: ${user.channelName}`);
+    }
   });
   
   if (fullState.length === 0) {
@@ -41,14 +54,20 @@ socket.on("StateDiff", (diff) => {
   if (diff.added.length > 0) {
     console.log(`Added users (${diff.added.length}):`);
     diff.added.forEach(user => {
-      console.log(`  + ${user.userId}: ${user.mobType} in ${user.lane} lane`);
+      let details = `${user.mobType} in ${user.lane} lane`;
+      if (user.team) details += ` (team: ${user.team})`;
+      if (user.channelName) details += ` (channel: ${user.channelName})`;
+      console.log(`  + ${user.userId}: ${details}`);
     });
   }
   
   if (diff.updated.length > 0) {
     console.log(`Updated users (${diff.updated.length}):`);
     diff.updated.forEach(user => {
-      console.log(`  ~ ${user.userId}: ${user.mobType} in ${user.lane} lane`);
+      let details = `${user.mobType} in ${user.lane} lane`;
+      if (user.team) details += ` (team: ${user.team})`;
+      if (user.channelName) details += ` (channel: ${user.channelName})`;
+      console.log(`  ~ ${user.userId}: ${details}`);
     });
   }
   
@@ -74,4 +93,5 @@ socket.on("connect_error", (error) => {
 
 // Keep the script running
 console.log("Minecraft server listening for state updates...");
+console.log("Usage: node minecraft-server.js [SINGLE|DUAL]");
 console.log("Press Ctrl+C to exit\n");

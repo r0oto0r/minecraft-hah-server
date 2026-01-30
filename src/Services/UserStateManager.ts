@@ -1,4 +1,4 @@
-import { UserSelection, StateDiff } from "../Interfaces/Interfaces";
+import { UserSelection, StateDiff, ChannelMode } from "../Interfaces/Interfaces";
 import { MobType } from "../Interfaces/MobTypes";
 import { Lane } from "../Interfaces/LaneTypes";
 import { Log } from "../Log";
@@ -10,6 +10,7 @@ export class UserStateManager {
 	private static pendingUpdate: boolean = false;
 	private static updateCallback: ((diff: StateDiff) => void) | null = null;
 	private static readonly THROTTLE_INTERVAL_MS = 1000; // 1 second
+	private static mode: ChannelMode = ChannelMode.SINGLE; // Default to single channel mode
 
 	/**
 	 * Set the callback function that will be called with state diffs
@@ -17,6 +18,44 @@ export class UserStateManager {
 	 */
 	public static setUpdateCallback(callback: (diff: StateDiff) => void) {
 		this.updateCallback = callback;
+	}
+
+	/**
+	 * Set the channel mode (SINGLE or DUAL)
+	 * @param mode Channel mode
+	 */
+	public static setMode(mode: ChannelMode) {
+		this.mode = mode;
+		Log.info(`Channel mode set to: ${mode}`);
+	}
+
+	/**
+	 * Get the current channel mode
+	 * @returns Current channel mode
+	 */
+	public static getMode(): ChannelMode {
+		return this.mode;
+	}
+
+	/**
+	 * Update or add a user's team selection
+	 * @param userId User ID
+	 * @param team Selected team
+	 */
+	public static updateUserTeam(userId: string, team: string) {
+		const existing = this.userState.get(userId);
+		if (existing) {
+			existing.team = team;
+		} else {
+			this.userState.set(userId, {
+				userId,
+				mobType: MobType.ZOMBIE, // Default mob type
+				lane: Lane.CENTER, // Default lane
+				team
+			});
+		}
+		this.scheduleUpdate();
+		Log.info(`User ${userId} selected team: ${team}`);
 	}
 
 	/**
@@ -60,6 +99,41 @@ export class UserStateManager {
 	}
 
 	/**
+	 * Set the channel name for a user (dual channel mode)
+	 * @param userId User ID
+	 * @param channelName Channel name
+	 */
+	public static setUserChannelName(userId: string, channelName: string) {
+		const existing = this.userState.get(userId);
+		if (existing) {
+			existing.channelName = channelName;
+		} else {
+			this.userState.set(userId, {
+				userId,
+				mobType: MobType.ZOMBIE, // Default mob type
+				lane: Lane.CENTER, // Default lane
+				channelName
+			});
+		}
+		Log.info(`User ${userId} channel name set to: ${channelName}`);
+	}
+
+	/**
+	 * Check if a user can select mob (in single channel mode, team must be set first)
+	 * @param userId User ID
+	 * @returns true if user can select mob, false otherwise
+	 */
+	public static canSelectMob(userId: string): boolean {
+		if (this.mode === ChannelMode.DUAL) {
+			return true; // In dual mode, always allowed
+		}
+		
+		// In single mode, team must be set first
+		const existing = this.userState.get(userId);
+		return existing !== undefined && existing.team !== undefined;
+	}
+
+	/**
 	 * Remove a user from the state
 	 * @param userId User ID to remove
 	 */
@@ -94,7 +168,9 @@ export class UserStateManager {
 				added.push(selection);
 			} else if (
 				previous.mobType !== selection.mobType ||
-				previous.lane !== selection.lane
+				previous.lane !== selection.lane ||
+				previous.team !== selection.team ||
+				previous.channelName !== selection.channelName
 			) {
 				updated.push(selection);
 			}
